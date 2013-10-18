@@ -69,21 +69,46 @@ termAndOperations terms ops = do
 	spaces
 	return $ join $ unfoldTree unfolder (term,op)
 
-expr :: Parser AST
 expr = let unaryAndFactors = do { op <- unary unaryMin "-"; term <- eterm; return $ Node op [term] } <|> eterm;
 		   additionAndSubstruction = many $ do { op <- oper (+) "+" <|> oper (-) "-"; other <- eterm; return (op,other) } 
 		in termAndOperations unaryAndFactors additionAndSubstruction
-eterm :: Parser AST
 eterm = let exponent = expterm;
 			multAndDiv = many $ do { op <- oper (*) "*" <|> oper (/) "/"; f <- expterm; return (op,f)  }
 		in termAndOperations exponent multAndDiv 
-expterm :: Parser AST
 expterm = let exponentOp = many $ do {op <- oper (**) "^"; f <- factor; return (op,f)}
 		  in termAndOperations factor exponentOp
-factor :: Parser AST
 factor = between spaces $ (fmap (node . Val) floatParser) <|> do { word "("; e <- expr;word ")"; return e; }
 
 
 compute (Node (BinaryOp(f)) (x:y:[])) = compute(x) `f` compute(y)
 compute (Node (UnaryOp(f)) (x:[])) = f $ compute(x)
 compute (Node (Val(x)) []) = x
+
+eval = fmap compute . result expr
+
+data InterpeterTestCases a = EqualityOf String (Maybe a)
+
+tests :: [InterpeterTestCases Float]
+tests = [
+	EqualityOf "2 + 3" $ Just(5),
+	EqualityOf "4 - 3" $ Just(1),
+	EqualityOf "2 + (-3)" $ Just(-1),
+	EqualityOf "4 * 5" $ Just(20),
+	EqualityOf "6/4" $ Just(6/4),
+	EqualityOf "1.2 + 1/2" $ Just(1.2+1/2),
+	EqualityOf "1/(-3)" $ Just(1/(-3)),
+	EqualityOf "0.5 + 0.2" $ Just(0.7),
+	EqualityOf "3 ^ 2 ^ 2" $ Just(81),
+	EqualityOf "17654/342" $ Just(8827/171),
+	EqualityOf "2/3^2" $ Just(2/9),
+	EqualityOf "(2/3)^2" $ Just(4/9)] 
+
+main = do
+	print "(2 + 3) / (2 - 2) == Just(Infinity)"
+	print $ Just $ Just(1/0) == eval "(2 + 3) / (2 - 2)"
+	print "2 + 345 + + + + 6 == Nothing"
+	print $ Just $ Nothing == eval "2 + 345 + + + + 6"  
+	forM_ tests $ \(EqualityOf expr expected) -> do 
+		print $ expr ++ " == " ++ (show expected)
+		let difference = liftA2 (-) (eval expr) expected
+		print $ fmap ((<0.0001) . abs) difference
