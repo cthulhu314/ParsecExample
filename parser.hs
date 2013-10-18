@@ -9,8 +9,9 @@ headOption [] = Nothing
 
 parse (P m) = m
 
-result m = fmap fst . headOption . parse m
-
+result m s= case headOption (parse m s) of
+	Just(res,"") -> Just(res)
+	_ -> Nothing
 instance Functor Parser where
 	fmap f m = m >>= \a -> return $ f a
 
@@ -44,7 +45,7 @@ term' y [] = []
 word = sequence . map (term) 
 digits = some $ msum $ map term ['0'..'9']
 integerParser = fmap (read :: String -> Integer) digits
-floatParser = fmap (read :: String -> Float) $ fmap join $ sequence [digits,word ".",digits]
+floatParser = fmap (read :: String -> Float) $ fmap join $ sequence [digits,fmap (join) (sequence [word ".",digits]) <|> (return "")]
 oper op s = fmap (const $ BinaryOp op) $ word s
 unary op s = fmap (const $ UnaryOp op) $ word s
 
@@ -57,18 +58,31 @@ unfolder (term1,((op,term2):xs)) = (node op,[(term1,[]),(term2,xs)])
 unfolder (term1,[]) = (term1,[])
 tokenToString (Val x) = show x
 tokenToString _ = "op"
+spaces = many $ word " "
+
+between p m = do {p; r <- m; p; return r }
+
+termAndOperations terms ops = do
+	spaces
+	term <- terms
+	op <- ops
+	spaces
+	return $ join $ unfoldTree unfolder (term,op)
+
 expr :: Parser AST
-expr = do 
-	term <- do { op <- unary unaryMin "-"; term <- eterm; return $ Node op [term] } <|> eterm
-	ops <- many $ do { op <- oper (+) "+" <|> oper (-) "-"; other <- eterm; return (op,other) }
-	return $ join $ unfoldTree unfolder (term,ops)
+expr = let unaryAndFactors = do { op <- unary unaryMin "-"; term <- eterm; return $ Node op [term] } <|> eterm;
+		   additionAndSubstruction = many $ do { op <- oper (+) "+" <|> oper (-) "-"; other <- eterm; return (op,other) } 
+		in termAndOperations unaryAndFactors additionAndSubstruction
 eterm :: Parser AST
-eterm = do 
-	fact <- factor  
-	others <- many $ do { op <- oper (*) "*" <|> oper (/) "/"; f <- factor; return (op,f)  }
-	return $ join $ unfoldTree unfolder (fact,others)
+eterm = let exponent = expterm;
+			multAndDiv = many $ do { op <- oper (*) "*" <|> oper (/) "/"; f <- expterm; return (op,f)  }
+		in termAndOperations exponent multAndDiv 
+expterm :: Parser AST
+expterm = let exponentOp = many $ do {op <- oper (**) "^"; f <- factor; return (op,f)}
+		  in termAndOperations factor exponentOp
 factor :: Parser AST
-factor = (fmap (node . Val) floatParser) <|> do { word "("; e <- expr;word ")"; return e; }
+factor = between spaces $ (fmap (node . Val) floatParser) <|> do { word "("; e <- expr;word ")"; return e; }
+
 
 compute (Node (BinaryOp(f)) (x:y:[])) = compute(x) `f` compute(y)
 compute (Node (UnaryOp(f)) (x:[])) = f $ compute(x)
